@@ -20,43 +20,71 @@ DIR_COLOR = {"bull": "#26a269", "bear": "#e01b24", "neutral": "#9a9996"}
 DIR_ICON = {"bull": "▲", "bear": "▼", "neutral": "◆"}
 BIAS_COLOR = {"Bullish": "#26a269", "Bearish": "#e01b24", "Mixed / neutral": "#9a9996"}
 
+# Timeframe tabs → (yfinance interval, history period, is-intraday).
+# Daily uses the History selector in Settings; intraday history is fixed by Yahoo's
+# per-interval limits (kept ample so the 200-bar SMA trend filter has warmup).
+TIMEFRAMES = {
+    "Daily":  ("1d",  None,  False),
+    "1 hour": ("60m", "6mo", True),
+    "30 min": ("30m", "1mo", True),
+    "15 min": ("15m", "1mo", True),
+    "5 min":  ("5m",  "10d", True),
+}
+
 
 @st.cache_data(ttl=900, show_spinner="Fetching gold data…")
-def load(symbol: str, period: str) -> pd.DataFrame:
-    return bot.fetch(symbol, period)
+def load(symbol: str, period: str, interval: str) -> pd.DataFrame:
+    return bot.fetch(symbol, period, interval)
 
 
 st.title("🥇 Gold Signal Bot")
-st.caption("Daily-chart setup radar with RSI + MACD and ATR stop/target. "
+st.caption("Multi-timeframe setup radar with RSI + MACD and ATR stop/target. "
            "Signal-only — not financial advice.")
+
+# Timeframe tabs — drive the WHOLE analysis (radar, signals, chart, backtest).
+tf = st.segmented_control("⏱ Timeframe", list(TIMEFRAMES), default="Daily") or "Daily"
+interval, tf_period, intraday = TIMEFRAMES[tf]
 
 with st.expander("⚙️ Settings", expanded=False):
     symbol = st.text_input("Symbol (yfinance)", bot.DEFAULT_SYMBOL)
-    period = st.selectbox("History", ["1y", "2y", "3y", "5y"], index=2)
+    if intraday:
+        period = tf_period
+        st.caption(f"History fixed at {tf_period} on the {tf} chart (Yahoo intraday limit).")
+    else:
+        period = st.selectbox("History", ["1y", "2y", "3y", "5y"], index=2)
     col_a, col_b = st.columns(2)
     long_only = col_a.checkbox("Long-only", value=False)
-    trend_filter = col_b.checkbox("200-DMA filter", value=True)
+    trend_filter = col_b.checkbox("Trend filter (200-bar SMA)", value=True)
     sl_atr = st.slider("Stop-loss (× ATR)", 0.5, 3.0, bot.DEFAULT_SL_ATR, 0.25)
     tp_atr = st.slider("Take-profit (× ATR)", 1.0, 6.0, bot.DEFAULT_TP_ATR, 0.25)
-    chart_bars = st.slider("Chart window (days)", 60, 400, 180, 20)
+    chart_bars = st.slider("Chart window (bars)", 60, 400, 180, 20)
 
 try:
-    df = load(symbol, period)
+    df = load(symbol, period, interval)
 except SystemExit as exc:
     st.error(str(exc))
     st.stop()
 
+
+def fmt_ts(ts):
+    return ts.strftime("%d %b %H:%M") if intraday else ts.date()
+
 events, trades, pos = bot.run_engine(df, sl_atr, tp_atr, not long_only, trend_filter)
 findings, d = su.scan(df)
 last = d.iloc[-1]
-last_date = d.index[-1].date()
+last_ts = d.index[-1]
+last_date = last_ts.date()
+stamp = last_ts.strftime("%d %b %Y · %H:%M") if intraday else str(last_date)
 bias_label, bias_score = su.bias(findings)
 
 # ============================================================================
 # HEADLINE — Setup radar
 # ============================================================================
 st.markdown("## 🎯 Setup radar")
-st.caption(f"As of {last_date} · gold ({symbol}) daily close")
+st.caption(f"As of {stamp} · gold ({symbol}) · {tf} chart")
+if intraday:
+    st.caption("⏱ Intraday view — in the notes below, 'day'/'DMA' means one **bar** on this "
+               "timeframe (e.g. '200-day' = 200 bars, '20-day high' = 20-bar high).")
 
 bc = BIAS_COLOR[bias_label]
 n_active = sum(1 for f in findings if f["status"] == "active")
@@ -96,16 +124,18 @@ c2.metric("RSI", f"{last.rsi:.1f}")
 c3.metric("MACD hist", f"{last.macd_hist:+.2f}")
 if not pd.isna(last.sma_trend):
     arrow = "▲ uptrend" if last.Close > last.sma_trend else "▼ downtrend"
-    st.caption(f"200-DMA {last.sma_trend:,.2f} — price {arrow}  ·  ATR (daily range) {last.atr:,.2f}")
+    st.caption(f"200-SMA {last.sma_trend:,.2f} — price {arrow}  ·  "
+               f"ATR ({'bar' if intraday else 'daily'} range) {last.atr:,.2f}")
 
-# Today's mechanical action
-todays = [e for e in events if e["date"].date() == last_date]
+# Latest-bar mechanical action
+now_lbl = "LATEST BAR" if intraday else "TODAY"
+todays = [e for e in events if e["date"] == last_ts]
 if todays:
     e = todays[-1]
-    msg = f"**TODAY: {e['action']}** @ {e['price']:,.2f} — {e['reason']}"
+    msg = f"**{now_lbl}: {e['action']}** @ {e['price']:,.2f} — {e['reason']}"
     (st.success if "LONG" in e["action"] else st.error if "SHORT" in e["action"] else st.warning)(msg)
 else:
-    st.info("**TODAY: no new signal — HOLD** (the engine only acts when a fresh trigger fires)")
+    st.info(f"**{now_lbl}: no new signal — HOLD** (the engine only acts when a fresh trigger fires)")
 
 # Open position / trade plan
 if pos:
@@ -113,10 +143,15 @@ if pos:
     rr = abs(target - entry) / (abs(entry - stop) or float("nan"))
     unreal = (last.Close - entry) if pos["side"] == "LONG" else (entry - last.Close)
     unreal_r = unreal / (abs(entry - stop) or float("nan"))
-    days_in = (d.index[-1] - pos["entry_date"]).days
+    held = d.index[-1] - pos["entry_date"]
+    if intraday:
+        hrs = held.total_seconds() / 3600
+        held_str = f"{hrs:.0f}h in" if hrs >= 1 else f"{held.total_seconds() / 60:.0f}m in"
+    else:
+        held_str = f"{held.days} days in"
     to_stop = (stop - last.Close) / last.Close * 100
     to_tgt = (target - last.Close) / last.Close * 100
-    st.markdown(f"#### Open position: {pos['side']} · {days_in} days in")
+    st.markdown(f"#### Open position: {pos['side']} · {held_str}")
     p1, p2, p3 = st.columns(3)
     p1.metric("Entry", f"{entry:,.2f}")
     p2.metric("Stop-loss", f"{stop:,.2f}", f"{to_stop:+.1f}% away")
@@ -126,8 +161,9 @@ else:
     st.markdown("#### Flat — waiting for the next entry trigger.")
 
 # ---- Chart: candles + MAs + markers, RSI, MACD ------------------------------
-st.markdown("### 📈 Chart")
-st.caption("Pinch to zoom, drag to pan, or use the toolbar (top-right). Double-tap to reset.")
+st.markdown(f"### 📈 Chart · {tf}")
+st.caption("Zoom: tap the top-right toolbar's +/− (or scroll / pinch on the plot); drag to pan; "
+           "double-tap to reset. Tip: the 'Chart window (bars)' slider in ⚙️ Settings also zooms.")
 view = d.tail(chart_bars)
 start = view.index[0]
 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.09,
@@ -176,7 +212,8 @@ fig.update_layout(height=900, template="plotly_dark", margin=dict(l=8, r=8, t=30
                   legend=dict(orientation="h", y=1.02, x=0), dragmode="pan", hovermode="x")
 # date axis + zoom crosshair on EVERY panel, weekends collapsed
 fig.update_xaxes(showticklabels=True, rangeslider_visible=False, showspikes=True,
-                 spikemode="across", spikethickness=1, tickformat="%d %b\n%Y",
+                 spikemode="across", spikethickness=1,
+                 tickformat="%H:%M\n%d %b" if intraday else "%d %b\n%Y",
                  rangebreaks=[dict(bounds=["sat", "mon"])])
 fig.update_yaxes(showspikes=True)
 fig.update_xaxes(title_text="Date", row=3, col=1)
@@ -188,7 +225,7 @@ st.plotly_chart(fig, width="stretch", config=config)
 st.markdown("### Recent signals")
 if events:
     st.dataframe(pd.DataFrame([{
-        "Date": e["date"].date(), "Signal": e["action"], "Price": round(e["price"], 2),
+        "Date": fmt_ts(e["date"]), "Signal": e["action"], "Price": round(e["price"], 2),
         "Result": f"{e['points']:+.1f} ({e['r_multiple']:+.2f}R)" if "r_multiple" in e else "—",
         "Reason": e["reason"],
     } for e in reversed(events[-15:])]), hide_index=True, width="stretch")
@@ -209,7 +246,7 @@ with st.expander("📊 Backtest (this window · no costs/slippage)"):
         b3.metric("Total", f"{total_r:+.1f}R")
         b4.metric("Profit factor", f"{pf:.2f}")
         st.dataframe(pd.DataFrame([{
-            "In": t["entry_date"].date(), "Out": t["exit_date"].date(),
+            "In": fmt_ts(t["entry_date"]), "Out": fmt_ts(t["exit_date"]),
             "Side": t["side"], "Entry": round(t["entry"], 2), "Exit": round(t["exit"], 2),
             "R": round(t["r_multiple"], 2), "Reason": t["reason"],
         } for t in reversed(trades)]), hide_index=True, width="stretch")

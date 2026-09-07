@@ -60,10 +60,10 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = ATR_PER
 # ----------------------------------------------------------------------------
 # Data
 # ----------------------------------------------------------------------------
-def fetch(symbol: str, period: str) -> pd.DataFrame:
-    df = yf.download(symbol, period=period, interval="1d", auto_adjust=False, progress=False)
+def fetch(symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
+    df = yf.download(symbol, period=period, interval=interval, auto_adjust=False, progress=False)
     if df is None or df.empty:
-        raise SystemExit(f"No data returned for {symbol!r}. Check the ticker / connection.")
+        raise SystemExit(f"No data returned for {symbol!r} ({interval}). Check the ticker / connection.")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df[["Open", "High", "Low", "Close"]].dropna()
