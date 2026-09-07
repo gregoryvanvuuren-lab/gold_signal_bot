@@ -74,7 +74,7 @@ findings, d = su.scan(df)
 last = d.iloc[-1]
 last_ts = d.index[-1]
 last_date = last_ts.date()
-stamp = last_ts.strftime("%d %b %Y · %H:%M") if intraday else str(last_date)
+stamp = last_ts.strftime("%d %b %Y · %H:%M (UK)") if intraday else str(last_date)
 bias_label, bias_score = su.bias(findings)
 
 # ============================================================================

@@ -26,6 +26,7 @@ DEFAULT_TP_ATR = 3.0           # take-profit distance in ATR multiples
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
 LOG_FILE = "signals.log"
+DISPLAY_TZ = "Europe/London"   # intraday timestamps shown in UK local time (auto GMT/BST)
 
 
 # ----------------------------------------------------------------------------
@@ -67,6 +68,8 @@ def fetch(symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df[["Open", "High", "Low", "Close"]].dropna()
+    if df.index.tz is not None:                      # intraday comes back tz-aware (US Eastern)
+        df.index = df.index.tz_convert(DISPLAY_TZ)   # -> UK local time for display
     df["rsi"] = rsi(df["Close"])
     line, sig, hist = macd(df["Close"])
     df["macd"], df["macd_sig"], df["macd_hist"] = line, sig, hist
