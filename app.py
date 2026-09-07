@@ -18,6 +18,7 @@ st.set_page_config(page_title="Gold Signal Bot", page_icon="🥇", layout="cente
 
 DIR_COLOR = {"bull": "#26a269", "bear": "#e01b24", "neutral": "#9a9996"}
 DIR_ICON = {"bull": "▲", "bear": "▼", "neutral": "◆"}
+BIAS_COLOR = {"Bullish": "#26a269", "Bearish": "#e01b24", "Mixed / neutral": "#9a9996"}
 
 
 @st.cache_data(ttl=900, show_spinner="Fetching gold data…")
@@ -26,7 +27,7 @@ def load(symbol: str, period: str) -> pd.DataFrame:
 
 
 st.title("🥇 Gold Signal Bot")
-st.caption("Daily-chart RSI + MACD with ATR stop/target, plus a setup radar. "
+st.caption("Daily-chart setup radar with RSI + MACD and ATR stop/target. "
            "Signal-only — not financial advice.")
 
 with st.expander("⚙️ Settings", expanded=False):
@@ -51,19 +52,53 @@ last = d.iloc[-1]
 last_date = d.index[-1].date()
 bias_label, bias_score = su.bias(findings)
 
-# ---- Header: snapshot + bias -------------------------------------------------
-st.subheader(f"As of {last_date}")
-c1, c2, c3, c4 = st.columns(4)
+# ============================================================================
+# HEADLINE — Setup radar
+# ============================================================================
+st.markdown("## 🎯 Setup radar")
+st.caption(f"As of {last_date} · gold ({symbol}) daily close")
+
+bc = BIAS_COLOR[bias_label]
+n_active = sum(1 for f in findings if f["status"] == "active")
+st.markdown(
+    f"<div style='background:{bc};padding:12px 16px;border-radius:8px;color:#fff;margin-bottom:8px'>"
+    f"<span style='font-size:1.4em;font-weight:700'>Bias: {bias_label}</span>"
+    f"<span style='opacity:0.85'> &nbsp;({bias_score:+d} · {n_active} active setup"
+    f"{'s' if n_active != 1 else ''})</span></div>",
+    unsafe_allow_html=True,
+)
+
+if findings:
+    for s in findings:
+        c = DIR_COLOR[s["direction"]]
+        st.markdown(
+            f"<div style='border-left:4px solid {c};padding:8px 12px;margin:6px 0;"
+            f"background:rgba(127,127,127,0.08);border-radius:4px'>"
+            f"<b>{DIR_ICON[s['direction']]} {s['name']}</b> "
+            f"<span style='opacity:0.6'>· {s['status']}</span><br>"
+            f"<span style='font-size:0.92em'>{s['note']}</span><br>"
+            f"<span style='font-size:0.85em;opacity:0.7;font-style:italic'>💡 {s['why']}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+else:
+    st.write("No notable setups on the latest bar — quiet market.")
+
+st.divider()
+
+# ============================================================================
+# Supporting detail
+# ============================================================================
+st.markdown("### Snapshot")
+c1, c2, c3 = st.columns(3)
 c1.metric("Close", f"{last.Close:,.2f}")
 c2.metric("RSI", f"{last.rsi:.1f}")
 c3.metric("MACD hist", f"{last.macd_hist:+.2f}")
-bias_delta = "▲" if bias_score > 0 else ("▼" if bias_score < 0 else "▬")
-c4.metric("Bias", bias_label, f"{bias_delta} {bias_score:+d}")
 if not pd.isna(last.sma_trend):
     arrow = "▲ uptrend" if last.Close > last.sma_trend else "▼ downtrend"
     st.caption(f"200-DMA {last.sma_trend:,.2f} — price {arrow}  ·  ATR (daily range) {last.atr:,.2f}")
 
-# ---- Today's mechanical action ----------------------------------------------
+# Today's mechanical action
 todays = [e for e in events if e["date"].date() == last_date]
 if todays:
     e = todays[-1]
@@ -72,7 +107,7 @@ if todays:
 else:
     st.info("**TODAY: no new signal — HOLD** (the engine only acts when a fresh trigger fires)")
 
-# ---- Open position / trade plan ---------------------------------------------
+# Open position / trade plan
 if pos:
     entry, stop, target = pos["entry"], pos["stop"], pos["target"]
     rr = abs(target - entry) / (abs(entry - stop) or float("nan"))
@@ -90,28 +125,13 @@ if pos:
 else:
     st.markdown("#### Flat — waiting for the next entry trigger.")
 
-# ---- Setup radar -------------------------------------------------------------
-st.markdown("#### 🎯 Setup radar")
-if findings:
-    for s in findings:
-        c = DIR_COLOR[s["direction"]]
-        st.markdown(
-            f"<div style='border-left:4px solid {c};padding:6px 10px;margin:5px 0;"
-            f"background:rgba(127,127,127,0.08);border-radius:4px'>"
-            f"<b>{DIR_ICON[s['direction']]} {s['name']}</b> "
-            f"<span style='opacity:0.6'>· {s['status']}</span><br>"
-            f"<span style='font-size:0.9em'>{s['note']}</span></div>",
-            unsafe_allow_html=True,
-        )
-else:
-    st.write("No notable setups on the latest bar — quiet market.")
-
 # ---- Chart: candles + MAs + markers, RSI, MACD ------------------------------
-st.markdown("#### 📈 Chart")
+st.markdown("### 📈 Chart")
+st.caption("Pinch to zoom, drag to pan, or use the toolbar (top-right). Double-tap to reset.")
 view = d.tail(chart_bars)
 start = view.index[0]
-fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-                    row_heights=[0.6, 0.2, 0.2], subplot_titles=("Price", "RSI", "MACD"))
+fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.09,
+                    row_heights=[0.56, 0.22, 0.22], subplot_titles=("Price", "RSI", "MACD"))
 
 fig.add_trace(go.Candlestick(x=view.index, open=view.Open, high=view.High, low=view.Low,
                              close=view.Close, name="Gold", showlegend=False), row=1, col=1)
@@ -152,13 +172,20 @@ fig.add_trace(go.Scatter(x=view.index, y=view.macd, line=dict(color="#62a0ea", w
 fig.add_trace(go.Scatter(x=view.index, y=view.macd_sig, line=dict(color="#f6c744", width=1),
                          name="Signal", showlegend=False), row=3, col=1)
 
-fig.update_layout(height=760, template="plotly_dark", margin=dict(l=8, r=8, t=28, b=8),
-                  legend=dict(orientation="h", y=1.03, x=0), dragmode="pan")
-fig.update_xaxes(rangeslider_visible=False, rangebreaks=[dict(bounds=["sat", "mon"])])
-st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+fig.update_layout(height=900, template="plotly_dark", margin=dict(l=8, r=8, t=30, b=8),
+                  legend=dict(orientation="h", y=1.02, x=0), dragmode="pan", hovermode="x")
+# date axis + zoom crosshair on EVERY panel, weekends collapsed
+fig.update_xaxes(showticklabels=True, rangeslider_visible=False, showspikes=True,
+                 spikemode="across", spikethickness=1, tickformat="%d %b\n%Y",
+                 rangebreaks=[dict(bounds=["sat", "mon"])])
+fig.update_yaxes(showspikes=True)
+fig.update_xaxes(title_text="Date", row=3, col=1)
+config = {"scrollZoom": True, "displayModeBar": True, "displaylogo": False,
+          "modeBarButtonsToRemove": ["lasso2d", "select2d"]}
+st.plotly_chart(fig, width="stretch", config=config)
 
 # ---- Recent signals ----------------------------------------------------------
-st.markdown("#### Recent signals")
+st.markdown("### Recent signals")
 if events:
     st.dataframe(pd.DataFrame([{
         "Date": e["date"].date(), "Signal": e["action"], "Price": round(e["price"], 2),
@@ -190,7 +217,7 @@ with st.expander("📊 Backtest (this window · no costs/slippage)"):
         st.write("No closed trades in this window.")
 
 # ---- Glossary ----------------------------------------------------------------
-with st.expander("📚 What these setups mean"):
+with st.expander("📚 Setup school — how to spot these on any index"):
     for name, text in su.GLOSSARY:
         st.markdown(f"**{name}** — {text}")
 
