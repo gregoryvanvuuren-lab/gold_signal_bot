@@ -1,4 +1,4 @@
-"""Mobile-friendly web front-end for the gold signal bot (Streamlit).
+"""Mobile-friendly web front-end for the WTI crude oil signal bot (Streamlit).
 
 Run locally:   streamlit run app.py
 Deploy free:   push to GitHub, then share.streamlit.io -> app.py
@@ -14,7 +14,7 @@ from plotly.subplots import make_subplots
 import gold_signal_bot as bot
 import setups as su
 
-st.set_page_config(page_title="Gold Signal Bot", page_icon="🥇", layout="centered")
+st.set_page_config(page_title="Crude Oil Signal Bot", page_icon="🛢️", layout="centered")
 
 DIR_COLOR = {"bull": "#26a269", "bear": "#e01b24", "neutral": "#9a9996"}
 DIR_ICON = {"bull": "▲", "bear": "▼", "neutral": "◆"}
@@ -32,12 +32,12 @@ TIMEFRAMES = {
 }
 
 
-@st.cache_data(ttl=900, show_spinner="Fetching gold data…")
+@st.cache_data(ttl=900, show_spinner="Fetching crude oil data…")
 def load(symbol: str, period: str, interval: str) -> pd.DataFrame:
     return bot.fetch(symbol, period, interval)
 
 
-st.title("🥇 Gold Signal Bot")
+st.title("🛢️ Crude Oil Signal Bot")
 st.caption("Multi-timeframe setup radar with RSI + MACD and ATR stop/target. "
            "Signal-only — not financial advice.")
 
@@ -81,7 +81,7 @@ bias_label, bias_score = su.bias(findings)
 # HEADLINE — Setup radar
 # ============================================================================
 st.markdown("## 🎯 Setup radar")
-st.caption(f"As of {stamp} · gold ({symbol}) · {tf} chart")
+st.caption(f"As of {stamp} · WTI crude ({symbol}) · {tf} chart")
 if intraday:
     st.caption("⏱ Intraday view — in the notes below, 'day'/'DMA' means one **bar** on this "
                "timeframe (e.g. '200-day' = 200 bars, '20-day high' = 20-bar high).")
@@ -170,7 +170,7 @@ fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.09,
                     row_heights=[0.56, 0.22, 0.22], subplot_titles=("Price", "RSI", "MACD"))
 
 fig.add_trace(go.Candlestick(x=view.index, open=view.Open, high=view.High, low=view.Low,
-                             close=view.Close, name="Gold", showlegend=False), row=1, col=1)
+                             close=view.Close, name="WTI", showlegend=False), row=1, col=1)
 for col, color, label in [("sma20", "#f6c744", "MA20"), ("sma50", "#62a0ea", "MA50"),
                           ("sma200", "#dddddd", "MA200")]:
     if col in view:

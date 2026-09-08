@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gold daily-chart signal bot: RSI + MACD momentum with ATR-based stop/target.
+"""Commodity signal bot (default WTI crude oil): RSI + MACD momentum with ATR stop/target.
 
 Signal-only. It does NOT place, size, or execute any trades — it prints trade
 setups for you to act on (or not) yourself. Not financial advice.
@@ -15,7 +15,7 @@ import yfinance as yf
 # ----------------------------------------------------------------------------
 # Defaults (override via CLI)
 # ----------------------------------------------------------------------------
-DEFAULT_SYMBOL = "GC=F"        # COMEX gold futures (USD). Alt: "GLD", "XAUUSD=X"
+DEFAULT_SYMBOL = "CL=F"        # WTI crude oil futures (USD). Alt: "BZ=F" (Brent), "USO"
 DEFAULT_PERIOD = "3y"          # history to pull for the daily chart
 RSI_PERIOD = 14
 MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
@@ -179,7 +179,7 @@ def build_report(df: pd.DataFrame, events, trades, pos, symbol: str) -> str:
     last_date = df.index[-1].date()
     out = []
     out.append("=" * 64)
-    out.append(f" GOLD SIGNAL BOT  ·  {symbol}  ·  daily chart")
+    out.append(f" CRUDE OIL SIGNAL BOT  ·  {symbol}  ·  daily chart")
     out.append(f" As of {last_date}  (signals confirm on the daily close)")
     out.append("=" * 64)
     out.append(
@@ -255,7 +255,7 @@ def backtest_summary(trades) -> str:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Gold daily RSI+MACD signal bot (signal-only).")
+    p = argparse.ArgumentParser(description="Commodity daily RSI+MACD signal bot (signal-only).")
     p.add_argument("--symbol", default=DEFAULT_SYMBOL, help=f"ticker (default {DEFAULT_SYMBOL})")
     p.add_argument("--period", default=DEFAULT_PERIOD, help=f"history window (default {DEFAULT_PERIOD})")
     p.add_argument("--sl-atr", type=float, default=DEFAULT_SL_ATR, help="stop-loss in ATR mult")
