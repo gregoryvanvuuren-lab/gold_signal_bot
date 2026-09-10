@@ -14,11 +14,20 @@ from plotly.subplots import make_subplots
 import gold_signal_bot as bot
 import setups as su
 
+try:                        # news-radar deps (feedparser/requests) are optional at import;
+    import research as rb   # a missing dep must not take down the whole chart app.
+    _NEWS_OK = True
+except Exception:
+    rb, _NEWS_OK = None, False
+
 st.set_page_config(page_title="Crude Oil Signal Bot", page_icon="🛢️", layout="centered")
 
 DIR_COLOR = {"bull": "#26a269", "bear": "#e01b24", "neutral": "#9a9996"}
 DIR_ICON = {"bull": "▲", "bear": "▼", "neutral": "◆"}
 BIAS_COLOR = {"Bullish": "#26a269", "Bearish": "#e01b24", "Mixed / neutral": "#9a9996"}
+TONE_COLOR = {"bull": "#26a269", "bear": "#e01b24", "neutral": "#9a9996"}
+TONE_TAG = {"bull": "🟢 bullish", "bear": "🔴 bearish", "neutral": "⚪ neutral"}
+IMPACT_COLOR = {"High": "#e01b24", "Medium": "#f6c744", "Low": "#9a9996"}
 
 # Timeframe tabs → (yfinance interval, history period, is-intraday).
 # Daily uses the History selector in Settings; intraday history is fixed by Yahoo's
@@ -35,6 +44,89 @@ TIMEFRAMES = {
 @st.cache_data(ttl=900, show_spinner="Fetching crude oil data…")
 def load(symbol: str, period: str, interval: str) -> pd.DataFrame:
     return bot.fetch(symbol, period, interval)
+
+
+@st.cache_data(ttl=1200, show_spinner="Scanning crude news…")
+def load_news(sym: str, days: int):
+    return rb.fetch_news(sym, days)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_cal(sym: str, within: int):
+    return rb.fetch_calendar(sym, within)
+
+
+def _news_card(it, ref) -> None:
+    c = TONE_COLOR[it["tone"]]
+    when = rb.ago(it["when"], ref) if it["when"] else "—"
+    link = (f"<a href='{it['url']}' target='_blank' style='color:inherit;"
+            f"text-decoration:none'>{it['title']}</a>") if it["url"] else it["title"]
+    st.markdown(
+        f"<div style='border-left:4px solid {c};padding:6px 12px;margin:4px 0;"
+        f"background:rgba(127,127,127,0.06);border-radius:4px'>"
+        f"<span style='font-size:0.94em'>{link}</span><br>"
+        f"<span style='font-size:0.77em;opacity:0.7'>{TONE_TAG[it['tone']]} · "
+        f"{it['source']} · {when}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_news_radar(sym: str, days: int, within: int) -> None:
+    news_symbol = sym if sym in rb.PROFILES else rb.DEFAULT_SYMBOL
+    news = load_news(news_symbol, days)
+    ref = rb.now_uk()
+    nb_label, nb_score = rb.news_bias(news)
+    n_bull = sum(it["tone"] == "bull" for it in news)
+    n_bear = sum(it["tone"] == "bear" for it in news)
+    nbc = BIAS_COLOR[nb_label]
+    st.markdown(
+        f"<div style='background:{nbc};padding:12px 16px;border-radius:8px;color:#fff;margin-bottom:8px'>"
+        f"<span style='font-size:1.4em;font-weight:700'>News bias: {nb_label}</span>"
+        f"<span style='opacity:0.85'> &nbsp;({nb_score:+d} · {n_bull} bullish / {n_bear} bearish "
+        f"of {len(news)} headlines)</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    movers = [it for it in news if it["tone"] != "neutral"]
+    st.markdown("#### ⚡ Could move it")
+    if movers:
+        for it in movers[:6]:
+            _news_card(it, ref)
+    else:
+        st.caption("No strongly directional headlines right now — a quiet news tape.")
+
+    cal = load_cal(news_symbol, within)
+    st.markdown(f"#### 📅 Next catalysts · {within}d")
+    if cal:
+        for ev in cal:
+            icol = IMPACT_COLOR.get(ev["impact"], "#9a9996")
+            when = ev["when"].strftime("%a %d %b · %H:%M") if ev["has_time"] \
+                else ev["when"].strftime("%a %d %b") + " · all-day/tentative"
+            oil = "🛢 " if ev["is_oil"] else ""
+            st.markdown(
+                f"<div style='border-left:4px solid {icol};padding:6px 12px;margin:5px 0;"
+                f"background:rgba(127,127,127,0.06);border-radius:4px'>"
+                f"<span style='font-size:0.8em;opacity:0.7'>{when}</span><br>"
+                f"<b>{oil}{ev['title']}</b> "
+                f"<span style='background:{icol};color:#111;font-size:0.72em;padding:1px 6px;"
+                f"border-radius:10px;font-weight:700'>{ev['impact']}</span>"
+                f"<span style='opacity:0.6;font-size:0.8em'> · {ev['country']}</span></div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("No scheduled high-impact catalysts in this window — moves more likely "
+                   "from breaking headlines.")
+
+    with st.expander(f"📰 All headlines · last {days}d"):
+        if news:
+            for it in news:
+                _news_card(it, ref)
+        else:
+            st.write("No headlines pulled just now — try again shortly.")
+
+    with st.expander("📚 Catalyst school — how to read each event"):
+        for gname, gtext in rb.GLOSSARY:
+            st.markdown(f"**{gname}** — {gtext}")
 
 
 st.title("🛢️ Crude Oil Signal Bot")
@@ -58,6 +150,9 @@ with st.expander("⚙️ Settings", expanded=False):
     sl_atr = st.slider("Stop-loss (× ATR)", 0.5, 3.0, bot.DEFAULT_SL_ATR, 0.25)
     tp_atr = st.slider("Take-profit (× ATR)", 1.0, 6.0, bot.DEFAULT_TP_ATR, 0.25)
     chart_bars = st.slider("Chart window (bars)", 60, 400, 180, 20)
+    st.caption("📰 News radar")
+    news_days = st.slider("News look-back (days)", 1, 5, 2)
+    news_within = st.slider("Catalyst look-ahead (days)", 1, 7, 3)
 
 try:
     df = load(symbol, period, interval)
@@ -111,6 +206,23 @@ if findings:
         )
 else:
     st.write("No notable setups on the latest bar — quiet market.")
+
+# ============================================================================
+# NEWS RADAR — live headlines + scheduled catalysts (the fundamental read)
+# ============================================================================
+st.divider()
+st.markdown("## 📰 News radar")
+if not _NEWS_OK:
+    st.info("News radar needs `feedparser` and `requests` in requirements.txt — "
+            "add them and redeploy to switch this on.")
+else:
+    st.caption("Free live scan of crude headlines + scheduled catalysts, rolled into a news "
+               "bias. News moves price on the *surprise* vs expectations — context & timing.")
+    try:
+        render_news_radar(symbol, news_days, news_within)
+    except Exception:  # a feed hiccup must never break the technical app
+        st.info("📰 News radar is briefly unavailable (feed hiccup or rate-limit). "
+                "The technical read above is unaffected — try again shortly.")
 
 st.divider()
 
