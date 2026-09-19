@@ -1,4 +1,7 @@
-"""Mobile-friendly web front-end for the WTI crude oil signal bot (Streamlit).
+"""Mobile-friendly web front-end for the commodity signal bot (Streamlit).
+
+Pick any of 10 markets (energy, precious/industrial metals, agriculture) from the
+dropdown — the chart, signal engine and news radar all follow the selection.
 
 Run locally:   streamlit run app.py
 Deploy free:   push to GitHub, then share.streamlit.io -> app.py
@@ -20,7 +23,7 @@ try:                        # news-radar deps (feedparser/requests) are optional
 except Exception:
     rb, _NEWS_OK = None, False
 
-st.set_page_config(page_title="Crude Oil Signal Bot", page_icon="🛢️", layout="centered")
+st.set_page_config(page_title="Commodity Signal Bot", page_icon="📈", layout="centered")
 
 DIR_COLOR = {"bull": "#26a269", "bear": "#e01b24", "neutral": "#9a9996"}
 DIR_ICON = {"bull": "▲", "bear": "▼", "neutral": "◆"}
@@ -41,12 +44,12 @@ TIMEFRAMES = {
 }
 
 
-@st.cache_data(ttl=900, show_spinner="Fetching crude oil data…")
+@st.cache_data(ttl=900, show_spinner="Fetching price data…")
 def load(symbol: str, period: str, interval: str) -> pd.DataFrame:
     return bot.fetch(symbol, period, interval)
 
 
-@st.cache_data(ttl=1200, show_spinner="Scanning crude news…")
+@st.cache_data(ttl=1200, show_spinner="Scanning the news…")
 def load_news(sym: str, days: int):
     return rb.fetch_news(sym, days)
 
@@ -73,6 +76,7 @@ def _news_card(it, ref) -> None:
 
 def render_news_radar(sym: str, days: int, within: int) -> None:
     news_symbol = sym if sym in rb.PROFILES else rb.DEFAULT_SYMBOL
+    cal_icon = rb.PROFILES[news_symbol].get("icon", "")
     news = load_news(news_symbol, days)
     ref = rb.now_uk()
     nb_label, nb_score = rb.news_bias(news)
@@ -102,12 +106,12 @@ def render_news_radar(sym: str, days: int, within: int) -> None:
             icol = IMPACT_COLOR.get(ev["impact"], "#9a9996")
             when = ev["when"].strftime("%a %d %b · %H:%M") if ev["has_time"] \
                 else ev["when"].strftime("%a %d %b") + " · all-day/tentative"
-            oil = "🛢 " if ev["is_oil"] else ""
+            mark = (cal_icon + " ") if ev["is_oil"] else ""
             st.markdown(
                 f"<div style='border-left:4px solid {icol};padding:6px 12px;margin:5px 0;"
                 f"background:rgba(127,127,127,0.06);border-radius:4px'>"
                 f"<span style='font-size:0.8em;opacity:0.7'>{when}</span><br>"
-                f"<b>{oil}{ev['title']}</b> "
+                f"<b>{mark}{ev['title']}</b> "
                 f"<span style='background:{icol};color:#111;font-size:0.72em;padding:1px 6px;"
                 f"border-radius:10px;font-weight:700'>{ev['impact']}</span>"
                 f"<span style='opacity:0.6;font-size:0.8em'> · {ev['country']}</span></div>",
@@ -129,16 +133,34 @@ def render_news_radar(sym: str, days: int, within: int) -> None:
             st.markdown(f"**{gname}** — {gtext}")
 
 
-st.title("🛢️ Crude Oil Signal Bot")
-st.caption("Multi-timeframe setup radar with RSI + MACD and ATR stop/target. "
-           "Signal-only — not financial advice.")
+# --- Commodity picker (drives the WHOLE app) + dynamic title -----------------
+if _NEWS_OK:
+    COMMODITIES = list(rb.PROFILES)                       # ordered by group
+    def _meta(s):
+        return rb.PROFILES[s]
+else:                                                     # research import unavailable
+    COMMODITIES = [bot.DEFAULT_SYMBOL]
+    def _meta(s):
+        return {"name": "WTI Crude Oil", "short": "WTI", "icon": "🛢️", "group": "Energy"}
+
+head = st.container()                                     # title slot, filled once we know the pick
+_default_ix = COMMODITIES.index(bot.DEFAULT_SYMBOL) if bot.DEFAULT_SYMBOL in COMMODITIES else 0
+symbol = st.selectbox(
+    "Commodity", COMMODITIES, index=_default_ix,
+    format_func=lambda s: f"{_meta(s)['icon']} {_meta(s)['name']}  ·  {_meta(s)['group']}",
+    help="Switch markets — the chart, signals and news radar all follow your pick.",
+)
+prof = _meta(symbol)
+with head:
+    st.title(f"{prof['icon']} {prof['name']} Signal Bot")
+    st.caption("Multi-timeframe setup radar (RSI + MACD, ATR stop/target) plus a live news "
+               "radar. Signal-only — not financial advice.")
 
 # Timeframe tabs — drive the WHOLE analysis (radar, signals, chart, backtest).
 tf = st.segmented_control("⏱ Timeframe", list(TIMEFRAMES), default="Daily") or "Daily"
 interval, tf_period, intraday = TIMEFRAMES[tf]
 
 with st.expander("⚙️ Settings", expanded=False):
-    symbol = st.text_input("Symbol (yfinance)", bot.DEFAULT_SYMBOL)
     if intraday:
         period = tf_period
         st.caption(f"History fixed at {tf_period} on the {tf} chart (Yahoo intraday limit).")
@@ -176,7 +198,7 @@ bias_label, bias_score = su.bias(findings)
 # HEADLINE — Setup radar
 # ============================================================================
 st.markdown("## 🎯 Setup radar")
-st.caption(f"As of {stamp} · WTI crude ({symbol}) · {tf} chart")
+st.caption(f"As of {stamp} · {prof['name']} ({symbol}) · {tf} chart")
 if intraday:
     st.caption("⏱ Intraday view — in the notes below, 'day'/'DMA' means one **bar** on this "
                "timeframe (e.g. '200-day' = 200 bars, '20-day high' = 20-bar high).")
@@ -216,8 +238,8 @@ if not _NEWS_OK:
     st.info("News radar needs `feedparser` and `requests` in requirements.txt — "
             "add them and redeploy to switch this on.")
 else:
-    st.caption("Free live scan of crude headlines + scheduled catalysts, rolled into a news "
-               "bias. News moves price on the *surprise* vs expectations — context & timing.")
+    st.caption(f"Free live scan of {prof['name']} headlines + scheduled catalysts, rolled into "
+               "a news bias. News moves price on the *surprise* vs expectations — context & timing.")
     try:
         render_news_radar(symbol, news_days, news_within)
     except Exception:  # a feed hiccup must never break the technical app
@@ -282,7 +304,8 @@ fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.09,
                     row_heights=[0.56, 0.22, 0.22], subplot_titles=("Price", "RSI", "MACD"))
 
 fig.add_trace(go.Candlestick(x=view.index, open=view.Open, high=view.High, low=view.Low,
-                             close=view.Close, name="WTI", showlegend=False), row=1, col=1)
+                             close=view.Close, name=prof.get("short", "Price"),
+                             showlegend=False), row=1, col=1)
 for col, color, label in [("sma20", "#f6c744", "MA20"), ("sma50", "#62a0ea", "MA50"),
                           ("sma200", "#dddddd", "MA200")]:
     if col in view:
